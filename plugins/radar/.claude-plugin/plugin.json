@@ -1,7 +1,7 @@
 {
   "name": "radar",
   "description": "Your open work across every GitHub repo, in the terminal. Open PRs, review requests, assigned issues, stale flags, merge history, and a shareable recap card - powered by your existing gh login.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": {
     "name": "Prateek Sahu"
   },

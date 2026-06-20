@@ -21,7 +21,7 @@ python "<skill_dir>/scripts/radar.py" <command> [args]
 
 | Command | What it does |
 |---|---|
-| `wip` (default) | Live snapshot of work in flight: open PRs you authored, PRs requesting your review, and issues assigned to you. Anything not updated in `stale_days` (default 14) is flagged `[STALE Nd]`. This is the daily-driver view. |
+| `wip` (default) | Live snapshot of work in flight, in 5 sections: **MERGED (last 7d)**, **PR CONFLICTS** (open PRs needing a rebase), **PR IN REVIEW** (your other open PRs, tagged with their review decision), **ASSIGNED, NO PR YET** (issues on you with no linked PR), and **AWAITING YOUR REVIEW** (PRs others want you to review). Anything idle past `stale_days` (default 14) is flagged `[STALE Nd]`. The daily-driver view. |
 | `log [--since YYYY-MM-DD]` | Merged/closed history since a date (default: 30 days ago, UTC). Upserts into a local log keyed by URL - idempotent, safe to re-run. Writes `log.json` + `log.md`. |
 | `log --recap` | An ASCII shareable card summarising the logged history (PRs merged, repos touched, date range, most-merged repos). ASCII-safe for any terminal. |
 
@@ -53,6 +53,10 @@ python "<skill_dir>/scripts/radar.py" <command> [args]
 
 - `wip` surfaces only what the `gh` token can see - private/org repos outside its scope
   won't appear, and review-requested/assigned items depend on token visibility.
+- "PR IN REVIEW" lists every open authored PR that is not conflicting; "no reviewers"
+  means none are requested yet, not that the PR is unreviewable.
+- "ASSIGNED, NO PR YET" detects a linked PR via the issue's connected / cross-referenced
+  timeline events - a PR linked only by free-text mention may not be detected.
 - GitHub's search index lags reality by up to a minute or two; a just-opened PR may not
   show immediately.
 - Authored PRs only for the "YOUR OPEN PRs" section (co-authored-but-not-authored PRs

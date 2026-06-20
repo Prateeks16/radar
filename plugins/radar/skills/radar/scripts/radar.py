@@ -97,6 +97,18 @@ def search_issues(q: str) -> list[dict]:
     return items
 
 
+def gql_search(q: str, inner: str) -> list[dict]:
+    """GraphQL issue/PR search. `inner` = fields inside a node. Returns matched nodes."""
+    query = ("query($q:String!){search(query:$q,type:ISSUE,first:100){nodes{"
+             + inner + "}}}")
+    data = gh_api("", params=[f"query={query}", f"q={q}"], graphql=True)
+    try:
+        nodes = data["data"]["search"]["nodes"]
+    except (KeyError, TypeError):
+        return []
+    return [n for n in nodes if n and n.get("number")]
+
+
 # ---------------------------------------------------------------------------
 # config + log
 # ---------------------------------------------------------------------------
@@ -166,46 +178,93 @@ def ascii_safe(s: str) -> str:
 # ---------------------------------------------------------------------------
 # wip - live snapshot
 # ---------------------------------------------------------------------------
+# GraphQL field sets for the live PR / issue fetches.
+_PR_FIELDS = ("... on PullRequest{number title url isDraft mergeable reviewDecision "
+              "updatedAt repository{nameWithOwner}}")
+_ISSUE_FIELDS = ("... on Issue{number title url updatedAt repository{nameWithOwner} "
+                 "timelineItems(itemTypes:[CONNECTED_EVENT,CROSS_REFERENCED_EVENT],"
+                 "first:20){nodes{__typename "
+                 "... on ConnectedEvent{subject{__typename}} "
+                 "... on CrossReferencedEvent{source{__typename}}}}}")
+
+_REVIEW_TAG = {
+    "APPROVED": "approved",
+    "CHANGES_REQUESTED": "changes requested",
+    "REVIEW_REQUIRED": "awaiting review",
+}
+
+
+def _has_linked_pr(issue: dict) -> bool:
+    for ev in (issue.get("timelineItems") or {}).get("nodes", []):
+        ref = ev.get("subject") or ev.get("source") or {}
+        if ref.get("__typename") == "PullRequest":
+            return True
+    return False
+
+
+def _review_tag(pr: dict) -> str:
+    if pr.get("isDraft"):
+        return "draft"
+    d = pr.get("reviewDecision")
+    return _REVIEW_TAG.get(d, "no reviewers") if d != "" else "no reviewers"
+
+
 def cmd_wip(args: argparse.Namespace) -> None:
     cfg = load_config()
     stale_days = int(cfg.get("stale_days", 14))
     login = whoami()
+    week_ago = (now_utc().date() - dt.timedelta(days=7)).isoformat()
 
-    my_prs = search_issues("author:@me type:pr state:open")
+    merged = search_issues(f"author:@me type:pr is:merged merged:>={week_ago}")
+    open_prs = gql_search("author:@me type:pr state:open", _PR_FIELDS)
+    assigned = gql_search("assignee:@me type:issue state:open", _ISSUE_FIELDS)
     review = search_issues("review-requested:@me type:pr state:open")
-    assigned = search_issues("assignee:@me type:issue state:open")
+
+    conflicts = [p for p in open_prs if p.get("mergeable") == "CONFLICTING"]
+    in_review = [p for p in open_prs if p.get("mergeable") != "CONFLICTING"]
+    no_pr = [i for i in assigned if not _has_linked_pr(i)]
 
     print(f"\nradar wip - @{login}  (day=UTC, as of {now_utc():%Y-%m-%d %H:%M}Z)")
     print("=" * 60)
 
-    _section("YOUR OPEN PRs", my_prs, stale_days)
-    _section("AWAITING YOUR REVIEW", review, stale_days)
-    _section("ISSUES ASSIGNED TO YOU", assigned, stale_days)
+    _section("MERGED (last 7d)", merged, stale_days, tag=lambda x: None)
+    _section("PR CONFLICTS", conflicts, stale_days, tag=lambda x: "needs rebase")
+    _section("PR IN REVIEW", in_review, stale_days, tag=_review_tag)
+    _section("ASSIGNED, NO PR YET", no_pr, stale_days, tag=lambda x: None)
+    _section("AWAITING YOUR REVIEW", review, stale_days, tag=lambda x: None)
 
-    total = len(my_prs) + len(review) + len(assigned)
-    stale = sum(1 for it in my_prs + review + assigned
-                if (age_days(it.get("updated_at")) or 0) >= stale_days)
     print("-" * 60)
-    tail = f", {stale} stale (>{stale_days}d)" if stale else ""
-    print(f"{total} items in flight: {len(my_prs)} PRs, "
-          f"{len(review)} to review, {len(assigned)} issues{tail}.\n")
+    tail = f", {len(conflicts)} conflicting" if conflicts else ""
+    print(f"{len(merged)} merged (7d) | {len(in_review)} in review | "
+          f"{len(no_pr)} to start | {len(review)} to review{tail}.\n")
 
 
-def _section(label: str, items: list[dict], stale_days: int) -> None:
+def _node_view(item: dict) -> dict:
+    """Normalise a REST search item or a GraphQL node to one shape."""
+    repo = item.get("repository", {}).get("nameWithOwner") or repo_from_item(item)
+    return {
+        "repo": repo,
+        "number": item.get("number", "?"),
+        "title": ascii_safe((item.get("title") or "").strip()),
+        "updated": item.get("updatedAt") or item.get("updated_at"),
+        "raw": item,
+    }
+
+
+def _section(label, items, stale_days, tag=lambda x: None) -> None:
     print(f"\n{label}  ({len(items)})")
     if not items:
         print("  (none)")
         return
-    items = sorted(items, key=lambda it: it.get("updated_at") or "", reverse=True)
-    for it in items:
-        repo = repo_from_item(it)
-        num = it.get("number", "?")
-        age = age_days(it.get("updated_at"))
+    rows = sorted((_node_view(it) for it in items),
+                  key=lambda v: v["updated"] or "", reverse=True)
+    for v in rows:
+        age = age_days(v["updated"])
         flag = f"  [STALE {age}d]" if age is not None and age >= stale_days else ""
-        title = ascii_safe((it.get("title") or "").strip())
-        if len(title) > 56:
-            title = title[:55] + "~"
-        print(f"  {repo}#{num}  {title}{flag}")
+        t = tag(v["raw"])
+        ann = f"  ({t})" if t else ""
+        title = v["title"][:49] + "~" if len(v["title"]) > 50 else v["title"]
+        print(f"  {v['repo']}#{v['number']}  {title}{ann}{flag}")
 
 
 # ---------------------------------------------------------------------------
