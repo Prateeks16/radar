@@ -1,0 +1,17 @@
+# Local radar data (personal - never committed)
+.claude/radar/
+log.json
+log.md
+config.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

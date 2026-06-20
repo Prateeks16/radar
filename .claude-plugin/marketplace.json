@@ -1,0 +1,19 @@
+{
+  "name": "radar",
+  "owner": {
+    "name": "Prateek Sahu"
+  },
+  "metadata": {
+    "description": "radar - your open work across every GitHub repo, in the terminal.",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "radar",
+      "source": "./plugins/radar",
+      "description": "Your open work across every GitHub repo, in the terminal. Open PRs, review requests, assigned issues, stale flags, merge history, and a shareable recap card.",
+      "version": "1.0.0",
+      "category": "productivity"
+    }
+  ]
+}
